@@ -60,6 +60,8 @@ extern struct fs_struct init_fs;
 	INIT_PREV_CPUTIME(sig)						\
 	.cred_guard_mutex =						\
 		 __MUTEX_INITIALIZER(sig.cred_guard_mutex),		\
+	.exec_update_mutex =						\
+		 __MUTEX_INITIALIZER(sig.exec_update_mutex),		\
 }
 
 extern struct nsproxy init_nsproxy;

@@ -1393,6 +1393,7 @@ static int copy_signal(unsigned long clone_flags, struct task_struct *tsk)
 				   current->signal->is_child_subreaper;
 
 	mutex_init(&sig->cred_guard_mutex);
+	mutex_init(&sig->exec_update_mutex);
 
 	return 0;
 }
