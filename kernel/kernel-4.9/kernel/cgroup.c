@@ -2336,7 +2336,7 @@ static void cgroup_kill_sb(struct super_block *sb)
 	kernfs_kill_sb(sb);
 }
 
-static struct file_system_type cgroup_fs_type = {
+struct file_system_type cgroup_fs_type = {
 	.name = "cgroup",
 	.mount = cgroup_mount,
 	.kill_sb = cgroup_kill_sb,
