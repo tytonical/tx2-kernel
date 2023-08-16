@@ -2496,6 +2496,8 @@ static int packet_snd_vnet_parse(struct msghdr *msg, size_t *len,
 static int packet_snd_vnet_gso(struct sk_buff *skb,
 			       struct virtio_net_hdr *vnet_hdr)
 {
+	u16 gso_size;
+
 	if (vnet_hdr->flags & VIRTIO_NET_HDR_F_NEEDS_CSUM) {
 		u16 s = __virtio16_to_cpu(vio_le(), vnet_hdr->csum_start);
 		u16 o = __virtio16_to_cpu(vio_le(), vnet_hdr->csum_offset);
@@ -2504,8 +2506,13 @@ static int packet_snd_vnet_gso(struct sk_buff *skb,
 			return -EINVAL;
 	}
 
-	skb_shinfo(skb)->gso_size =
-		__virtio16_to_cpu(vio_le(), vnet_hdr->gso_size);
+	gso_size = __virtio16_to_cpu(vio_le(), vnet_hdr->gso_size);
+
+	/* Kernel has a special handling for GSO_BY_FRAGS. */
+	if (gso_size == GSO_BY_FRAGS)
+		return -EINVAL;
+
+	skb_shinfo(skb)->gso_size = gso_size;
 	skb_shinfo(skb)->gso_type = vnet_hdr->gso_type;
 
 	/* Header must be checked, and gso_segs computed. */
