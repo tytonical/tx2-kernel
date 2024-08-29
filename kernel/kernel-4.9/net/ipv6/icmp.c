@@ -213,6 +213,8 @@ static bool icmpv6_xrlim_allow(struct sock *sk, u8 type,
 			res = inet_peer_xrlim_allow(peer, tmo);
 			if (peer)
 				inet_putpeer(peer);
+			if (res)
+				icmp_global_consume();
 		}
 	}
 	dst_release(dst);
