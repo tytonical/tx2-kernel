@@ -2281,6 +2281,7 @@ int tcp_disconnect(struct sock *sk, int flags)
 	struct tcp_sock *tp = tcp_sk(sk);
 	int err = 0;
 	int old_state = sk->sk_state;
+	struct request_sock *req;
 
 	if (old_state != TCP_CLOSE)
 		tcp_set_state(sk, TCP_CLOSE);
@@ -2351,6 +2352,9 @@ int tcp_disconnect(struct sock *sk, int flags)
 	tp->data_segs_out = 0;
 
 	/* Clean up fastopen related fields */
+	req = tp->fastopen_rsk;
+	if (req)
+		reqsk_fastopen_remove(sk, req, false);
 	tcp_free_fastopen_req(tp);
 	inet->defer_connect = 0;
 
