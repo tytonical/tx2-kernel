@@ -101,9 +101,17 @@ int __fsnotify_parent(struct path *path, struct dentry *dentry, __u32 mask)
 	parent = dget_parent(dentry);
 	p_inode = parent->d_inode;
 
+	/*
+	 * The parent interest in ACCESS/MODIFY events does not apply to special
+	 * files, where read/write are not on the filesystem of the parent and
+	 * events can provide an undesirable side-channel for information
+	 * exfiltration.
+	 */
 	if (unlikely(!fsnotify_inode_watches_children(p_inode))) {
 		__fsnotify_update_child_dentry_flags(p_inode);
-	} else if (p_inode->i_fsnotify_mask & mask & ~FS_EVENT_ON_CHILD) {
+	} else if ((p_inode->i_fsnotify_mask & mask & ~FS_EVENT_ON_CHILD) &&
+		   !(path && d_is_special(dentry) &&
+		     (mask & (FS_ACCESS | FS_MODIFY)))) {
 		struct name_snapshot name;
 
 		/* we are notifying a parent so come up with the new mask which
