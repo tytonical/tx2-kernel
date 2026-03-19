@@ -190,11 +190,20 @@ static inline int is_write_migration_entry(swp_entry_t entry)
 static inline struct page *migration_entry_to_page(swp_entry_t entry)
 {
 	struct page *p = pfn_to_page(swp_offset(entry));
+	struct page *head = compound_head(p);
+
+	/*
+	 * Ensure we do not race with split, which might alter tail pages into
+	 * new pages and thus result in observing an unlocked page.
+	 * This matches the write barrier in __split_huge_page_tail().
+	 */
+	smp_rmb();
+
 	/*
 	 * Any use of migration entries may only occur while the
 	 * corresponding page is locked
 	 */
-	BUG_ON(!PageLocked(p));
+	BUG_ON(!PageLocked(head));
 	return p;
 }
 
