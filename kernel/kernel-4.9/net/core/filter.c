@@ -1202,6 +1202,26 @@ static int __sk_attach_prog(struct bpf_prog *prog, struct sock *sk)
 	return 0;
 }
 
+static void sk_reuseport_prog_free_rcu(struct rcu_head *rcu)
+{
+	struct bpf_prog_aux *aux = container_of(rcu, struct bpf_prog_aux, rcu);
+	struct bpf_prog *prog = aux->prog;
+
+	bpf_release_orig_filter(prog);
+	bpf_prog_free(prog);
+}
+
+static void sk_reuseport_prog_free(struct bpf_prog *prog)
+{
+	if (!prog)
+		return;
+
+	if (bpf_prog_was_classic(prog))
+		call_rcu(&prog->aux->rcu, sk_reuseport_prog_free_rcu);
+	else
+		bpf_prog_destroy(prog);
+}
+
 static int __reuseport_attach_prog(struct bpf_prog *prog, struct sock *sk)
 {
 	struct bpf_prog *old_prog;
@@ -1220,8 +1240,7 @@ static int __reuseport_attach_prog(struct bpf_prog *prog, struct sock *sk)
 	}
 
 	old_prog = reuseport_attach_prog(sk, prog);
-	if (old_prog)
-		bpf_prog_destroy(old_prog);
+	sk_reuseport_prog_free(old_prog);
 
 	return 0;
 }
