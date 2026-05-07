@@ -1099,12 +1099,18 @@ static void mark_wakeup_next_waiter(struct wake_q_head *wake_q,
 static void remove_waiter(struct rt_mutex *lock,
 			  struct rt_mutex_waiter *waiter)
 {
-	bool is_top_waiter = (waiter == rt_mutex_top_waiter(lock));
 	struct task_struct *owner = rt_mutex_owner(lock);
 	struct task_struct *waiter_task = waiter->task;
 	struct rt_mutex *next_lock;
+	bool is_top_waiter;
 
 	lockdep_assert_held(&lock->wait_lock);
+
+	if (!waiter_task) /* never enqueued */
+		return;
+
+	/* rt_mutex_top_waiter() is not safe on an empty tree in 4.9. */
+	is_top_waiter = (waiter == rt_mutex_top_waiter(lock));
 
 	raw_spin_lock(&waiter_task->pi_lock);
 	rt_mutex_dequeue(lock, waiter);
@@ -1774,7 +1780,7 @@ int rt_mutex_start_proxy_lock(struct rt_mutex *lock,
 
 	raw_spin_lock_irq(&lock->wait_lock);
 	ret = __rt_mutex_start_proxy_lock(lock, waiter, task);
-	if (unlikely(ret))
+	if (unlikely(ret < 0))
 		remove_waiter(lock, waiter);
 	raw_spin_unlock_irq(&lock->wait_lock);
 
