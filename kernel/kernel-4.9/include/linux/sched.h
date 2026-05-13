@@ -1685,6 +1685,10 @@ struct task_struct {
 	unsigned :0; /* force alignment to the next boundary */
 
 	/* unserialized, strictly 'current' */
+
+	/* Save user-dumpable when mm goes away */
+	unsigned user_dumpable:1;
+
 	unsigned in_execve:1; /* bit to tell LSMs we're in execve */
 	unsigned in_iowait:1;
 #if !defined(TIF_RESTORE_SIGMASK)
