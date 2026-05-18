@@ -415,6 +415,11 @@ static int proc_pid_wchan(struct seq_file *m, struct pid_namespace *ns,
 {
 	unsigned long wchan;
 	char symname[KSYM_NAME_LEN];
+	int err;
+
+	err = down_read_killable(&task->signal->exec_update_lock);
+	if (err)
+		return err;
 
 	wchan = get_wchan(task);
 
@@ -424,6 +429,7 @@ static int proc_pid_wchan(struct seq_file *m, struct pid_namespace *ns,
 	else
 		seq_putc(m, '0');
 
+	up_read(&task->signal->exec_update_lock);
 	return 0;
 }
 #endif /* CONFIG_KALLSYMS */
@@ -2089,15 +2095,15 @@ static struct dentry *proc_map_files_lookup(struct inode *dir,
 	if (!task)
 		goto out;
 
-	result = -EACCES;
-	if (!ptrace_may_access(task, PTRACE_MODE_READ_FSCREDS))
-		goto out_put_task;
-
 	result = -ENOENT;
 	if (dname_to_vma_addr(dentry, &vm_start, &vm_end))
 		goto out_put_task;
 
-	mm = get_task_mm(task);
+	mm = mm_access(task, PTRACE_MODE_READ_FSCREDS);
+	if (IS_ERR(mm)) {
+		result = PTR_ERR(mm);
+		goto out_put_task;
+	}
 	if (!mm)
 		goto out_put_task;
 
@@ -2142,15 +2148,16 @@ proc_map_files_readdir(struct file *file, struct dir_context *ctx)
 	if (!task)
 		goto out;
 
-	ret = -EACCES;
-	if (!ptrace_may_access(task, PTRACE_MODE_READ_FSCREDS))
-		goto out_put_task;
-
 	ret = 0;
 	if (!dir_emit_dots(file, ctx))
 		goto out_put_task;
 
-	mm = get_task_mm(task);
+	mm = mm_access(task, PTRACE_MODE_READ_FSCREDS);
+	if (IS_ERR(mm)) {
+		ret = PTR_ERR(mm);
+		goto out_put_task;
+	}
+	/* if the task has no mm, the directory should just be empty */
 	if (!mm)
 		goto out_put_task;
 	down_read(&mm->mmap_sem);
