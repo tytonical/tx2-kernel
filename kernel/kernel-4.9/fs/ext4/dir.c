@@ -212,7 +212,9 @@ static int ext4_readdir(struct file *file, struct dir_context *ctx)
 		 * dirent right now.  Scan from the start of the block
 		 * to make sure. */
 		if (file->f_version != inode->i_version) {
-			for (i = 0; i < sb->s_blocksize && i < offset; ) {
+			for (i = 0;
+			     i <= sb->s_blocksize - EXT4_DIR_REC_LEN(1) &&
+			     i < offset;) {
 				de = (struct ext4_dir_entry_2 *)
 					(bh->b_data + i);
 				/* It's too expensive to do a full
@@ -231,6 +233,16 @@ static int ext4_readdir(struct file *file, struct dir_context *ctx)
 			ctx->pos = (ctx->pos & ~(sb->s_blocksize - 1))
 				| offset;
 			file->f_version = inode->i_version;
+		}
+
+		if (unlikely(offset < sb->s_blocksize &&
+			     offset > sb->s_blocksize - EXT4_DIR_REC_LEN(1))) {
+			EXT4_ERROR_FILE(file, bh->b_blocknr,
+					"bad entry in directory: %s - offset=%u, size=%lu",
+					"directory entry too close to block end",
+					offset, sb->s_blocksize);
+			ctx->pos = round_up(ctx->pos, sb->s_blocksize);
+			goto next_block;
 		}
 
 		while (ctx->pos < inode->i_size
@@ -278,6 +290,7 @@ static int ext4_readdir(struct file *file, struct dir_context *ctx)
 			ctx->pos += ext4_rec_len_from_disk(de->rec_len,
 						sb->s_blocksize);
 		}
+next_block:
 		if ((ctx->pos < inode->i_size) && !dir_relax_shared(inode))
 			goto done;
 		brelse(bh);
