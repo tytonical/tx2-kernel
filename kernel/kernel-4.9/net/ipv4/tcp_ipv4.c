@@ -1344,7 +1344,7 @@ struct sock *__tcp_v4_syn_recv_sock(const struct sock *sk, struct sk_buff *skb,
 	tcp_ca_openreq_child(newsk, dst);
 
 	tcp_sync_mss(newsk, dst_mtu(dst));
-	newtp->advmss = dst_metric_advmss(dst);
+	newtp->advmss = tcp_dst_advmss(dst);
 	if (tcp_sk(sk)->rx_opt.user_mss &&
 	    tcp_sk(sk)->rx_opt.user_mss < newtp->advmss)
 		newtp->advmss = tcp_sk(sk)->rx_opt.user_mss;

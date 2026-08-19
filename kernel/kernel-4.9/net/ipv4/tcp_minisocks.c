@@ -373,7 +373,7 @@ void tcp_openreq_init_rwin(struct request_sock *req,
 	const struct tcp_sock *tp = tcp_sk(sk_listener);
 	u16 user_mss = READ_ONCE(tp->rx_opt.user_mss);
 	int full_space = tcp_full_space(sk_listener);
-	int mss = dst_metric_advmss(dst);
+	int mss = tcp_dst_advmss(dst);
 	u32 window_clamp;
 	__u8 rcv_wscale;
 
