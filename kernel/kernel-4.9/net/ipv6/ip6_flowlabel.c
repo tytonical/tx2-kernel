@@ -441,6 +441,21 @@ done:
 	return NULL;
 }
 
+static bool fl_sock_at_lease_limit(struct ipv6_pinfo *np)
+{
+	struct ipv6_fl_socklist *sfl;
+	int count = 0;
+
+	rcu_read_lock_bh();
+	for_each_sk_fl_rcu(np, sfl) {
+		if (++count >= FL_MAX_PER_SOCK)
+			break;
+	}
+	rcu_read_unlock_bh();
+
+	return count >= FL_MAX_PER_SOCK;
+}
+
 static int mem_check(struct sock *sk)
 {
 	struct ipv6_pinfo *np = inet6_sk(sk);
@@ -643,6 +658,10 @@ recheck:
 
 				err = -ENOMEM;
 				if (!sfl1)
+					goto release;
+				err = -ENOBUFS;
+				if (fl_sock_at_lease_limit(np) &&
+				    !capable(CAP_NET_ADMIN))
 					goto release;
 				if (fl->linger > fl1->linger)
 					fl1->linger = fl->linger;
