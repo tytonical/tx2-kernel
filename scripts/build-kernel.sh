@@ -15,6 +15,12 @@ DTBS="tegra186-p3636-0001-p3509-0000-a01.dtb tegra186-p3636-0002-p3509-0000-a01.
 # NET_VENDOR_NVIDIA/PCI), so check the build output, not just .config.
 REQUIRED_OBJS="
 	drivers/net/ethernet/nvidia/eqos/built-in.o
+	drivers/net/phy/libphy.o
+	drivers/net/phy/realtek.o
+	drivers/of/of_mdio.o
+	drivers/extcon/extcon-core.o
+	drivers/tty/serial/8250/8250_of.o
+	drivers/tty/serial/serial-tegra.o
 	drivers/gpu/nvgpu/nvgpu.ko
 	drivers/video/tegra/host/built-in.o
 	drivers/video/tegra/nvmap/built-in.o
