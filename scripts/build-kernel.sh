@@ -25,14 +25,28 @@ REQUIRED_OBJS="
 	drivers/watchdog/tegra_wdt_t18x.o
 	drivers/md/dm-verity.o
 	drivers/i2c/busses/i2c-tegra.o
+	drivers/i2c/i2c-dev.o
+	net/ipv4/netfilter/ip_tables.ko
+	net/ipv4/netfilter/iptable_filter.ko
+	net/ipv6/netfilter/ip6table_filter.ko
+	net/netfilter/xt_conntrack.ko
 	drivers/mmc/host/sdhci-tegra.o
 	drivers/thermal/userspace_alert.ko
 	drivers/block/zram/zram.ko
+	fs/ext4/built-in.o
+	drivers/mfd/max77620.o
+	drivers/regulator/max77620-regulator.o
+	drivers/devfreq/devfreq.o
+	drivers/ptp/built-in.o
+	drivers/leds/leds-gpio.o
 "
 
 mkdir -p "$OUT"
-make -C "$KSRC" O="$OUT" tegra_defconfig >/dev/null
-(cd "$KSRC" && ARCH=$ARCH scripts/kconfig/merge_config.sh -m -O "$OUT" "$OUT/.config" "$FRAG" >/dev/null)
+# Merge onto the defconfig file, not an expanded .config: an expanded config
+# carries library symbols (CRC7, etc.) that were only selected by drivers the
+# fragment removes, and olddefconfig would keep them as explicit choices.
+(cd "$KSRC" && ARCH=$ARCH scripts/kconfig/merge_config.sh -m -O "$OUT" \
+	arch/arm64/configs/tegra_defconfig "$FRAG" >/dev/null)
 make -C "$KSRC" O="$OUT" olddefconfig >/dev/null
 
 # Fail if Kconfig overrode any fragment setting (dependency selected it back on,
