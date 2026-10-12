@@ -1,0 +1,83 @@
+# Build the TX2 NX ANPR kernel (tegra_defconfig + configs/tx2nx-anpr.config)
+# with Ubuntu's aarch64 cross toolchain, and publish the image, DTBs and
+# modules as artifacts.
+name: kernel-build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kernel-build-${{ github.ref }}
+  cancel-in-progress: true
+
+# An explicit "shell: bash" makes GitHub run steps with -eo pipefail, so a
+# failed build piped through tee still fails the job.
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      ARCH: arm64
+      CROSS_COMPILE: aarch64-linux-gnu-
+      OUT: ${{ github.workspace }}/out
+      STAGE: ${{ github.workspace }}/stage
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-aarch64-linux-gnu bc bison flex libssl-dev kmod xz-utils
+          aarch64-linux-gnu-gcc --version | head -1
+          make --version | head -1
+
+      # Same script as local builds: merges the fragment onto tegra_defconfig,
+      # fails if Kconfig overrides any fragment setting or if a required driver
+      # object is missing, then builds Image, modules and the TX2 NX DTBs.
+      - name: Build kernel
+        run: scripts/build-kernel.sh "$OUT" 2>&1 | tee build.log
+
+      - name: Stage image, DTBs and modules
+        run: |
+          set -euo pipefail
+          KSRC=kernel/kernel-4.9
+          mkdir -p "$STAGE/boot/dtb"
+          cp "$OUT/arch/arm64/boot/Image" "$OUT/System.map" "$OUT/.config" \
+             "$OUT/Module.symvers" "$STAGE/boot/"
+          find "$OUT/arch/arm64/boot/dts" -name 'tegra186-p3636-*.dtb' \
+             -exec cp {} "$STAGE/boot/dtb/" \;
+          make -C "$KSRC" O="$OUT" INSTALL_MOD_PATH="$STAGE" INSTALL_MOD_STRIP=1 \
+             modules_install
+          release=$(cat "$OUT/include/config/kernel.release")
+          rm -f "$STAGE/lib/modules/$release/build" "$STAGE/lib/modules/$release/source"
+          echo "$release ${GITHUB_SHA}" > "$STAGE/boot/kernel-version.txt"
+          ls -l "$STAGE/boot" "$STAGE/boot/dtb"
+          tar -C "$STAGE" -cJf "tx2nx-kernel-${release}-${GITHUB_SHA::12}.tar.xz" boot lib
+
+      - name: Warnings summary
+        if: always()
+        run: |
+          echo "### Build warnings" >> "$GITHUB_STEP_SUMMARY"
+          echo "$(grep -c ': warning:' build.log || true) compiler warnings" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tx2nx-kernel
+          path: tx2nx-kernel-*.tar.xz
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: build-log
+          path: build.log
