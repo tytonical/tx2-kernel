@@ -1132,11 +1132,13 @@ static struct device *tegra_camrtc_get_hsp_device(struct device_node *hsp_node)
 	if (pdev == NULL)
 		return ERR_PTR(-EPROBE_DEFER);
 
-	if (&pdev->dev.driver == NULL) {
-		platform_device_put(pdev);
-		return ERR_PTR(-EPROBE_DEFER);
-	}
-
+	/*
+	 * NVIDIA's original code tested &pdev->dev.driver == NULL, which is
+	 * never true, so it never deferred. That dead check is removed so newer
+	 * compilers build (-Werror=address), keeping the shipped behaviour. The
+	 * intended pdev->dev.driver == NULL test is a behaviour change on the
+	 * camera path and needs hardware testing before it is enabled.
+	 */
 	return &pdev->dev;
 }
 
