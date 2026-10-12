@@ -36,7 +36,11 @@ DTC_FLAGS += -i $(tegra-dtstree)/platform/tegra/common/kernel-dts
 DTCCPP_FLAGS := -I$(tegra-dtstree)/soc/tegra/kernel-include
 DTCCPP_FLAGS += -I$(tegra-dtstree)/platform/tegra/common/kernel-dts
 DTCCPP_FLAGS += -DLINUX_VERSION=409
-DTCCPP_FLAGS += -Wno-builtin-macro-redefined -D__FILE__='"$(basename $<)"'
+# Keep the build directory out of nvidia,dtsfilename (__FILE__) so DTBs are
+# reproducible. DTCCPP_FLAGS is a simple variable, so $< cannot be used here:
+# it would expand to nothing. Strip the source-tree prefix in the
+# preprocessor instead (GCC 8+; a no-op with older compilers).
+DTCCPP_FLAGS += $(call cc-option,-fmacro-prefix-map=$(srctree)/=)
 
 ifeq ($(CONFIG_ARCH_TEGRA_210_SOC),y)
 DTC_FLAGS += -i $(tegra-dtstree)/soc/t210/kernel-dts
