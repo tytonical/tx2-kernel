@@ -474,10 +474,13 @@ static struct platform_device *tegra_vi_get(struct device *dev)
 	if (vi_pdev == NULL)
 		return ERR_PTR(-EPROBE_DEFER);
 
-	if (&vi_pdev->dev.driver == NULL) {
-		platform_device_put(vi_pdev);
-		return ERR_PTR(-EPROBE_DEFER);
-	}
+	/*
+	 * NVIDIA's original code tested &vi_pdev->dev.driver == NULL, which is
+	 * never true, so it never deferred. That dead check is removed so newer
+	 * compilers build (-Werror=address), keeping the shipped behaviour. The
+	 * intended vi_pdev->dev.driver == NULL test is a behaviour change on
+	 * the camera path and needs hardware testing before it is enabled.
+	 */
 	return vi_pdev;
 }
 

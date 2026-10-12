@@ -895,9 +895,11 @@ static int pca9629a_stepper_probe(struct i2c_client *client,
 	if (!stepper->stepper_dev)
 		return -ENODEV;
 
-	if (!(&stepper->stepper_dev->chardev))
-		return -ENODEV;
-
+	/*
+	 * A check of !(&stepper->stepper_dev->chardev) was removed: the address
+	 * of an embedded member is never NULL, so it was dead code and newer
+	 * compilers reject it (-Werror=address). Behaviour is unchanged.
+	 */
 	stepper_reset(client);
 
 	return 0;
