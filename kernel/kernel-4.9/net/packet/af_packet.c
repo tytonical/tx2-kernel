@@ -3750,8 +3750,12 @@ packet_setsockopt(struct socket *sock, int level, int optname, char __user *optv
 		return ret;
 	}
 
-	case PACKET_RX_RING:
 	case PACKET_TX_RING:
+		/* TX rings are not used on this platform. Refuse them rather
+		 * than carry the mmap'd transmit path (see CVE-2026-80841).
+		 */
+		return -EOPNOTSUPP;
+	case PACKET_RX_RING:
 	{
 		union tpacket_req_u req_u;
 		int len;
