@@ -124,13 +124,13 @@ jobs:
           echo "### Build warnings" >> "$GITHUB_STEP_SUMMARY"
           echo "$(grep -c ': warning:' build.log || true) compiler warnings" >> "$GITHUB_STEP_SUMMARY"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: tx2nx-kernel-${{ steps.version.outputs.version }}
           path: dist/*
           if-no-files-found: error
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: build-log
