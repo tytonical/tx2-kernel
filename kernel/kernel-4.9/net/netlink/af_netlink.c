@@ -368,15 +368,6 @@ static void netlink_skb_set_owner_r(struct sk_buff *skb, struct sock *sk)
 
 static void netlink_sock_destruct(struct sock *sk)
 {
-	struct netlink_sock *nlk = nlk_sk(sk);
-
-	if (nlk->cb_running) {
-		if (nlk->cb.done)
-			nlk->cb.done(&nlk->cb);
-		module_put(nlk->cb.module);
-		kfree_skb(nlk->cb.skb);
-	}
-
 	skb_queue_purge(&sk->sk_receive_queue);
 
 	if (!sock_flag(sk, SOCK_DEAD)) {
@@ -387,14 +378,6 @@ static void netlink_sock_destruct(struct sock *sk)
 	WARN_ON(atomic_read(&sk->sk_rmem_alloc));
 	WARN_ON(atomic_read(&sk->sk_wmem_alloc));
 	WARN_ON(nlk_sk(sk)->groups);
-}
-
-static void netlink_sock_destruct_work(struct work_struct *work)
-{
-	struct netlink_sock *nlk = container_of(work, struct netlink_sock,
-						work);
-
-	sk_free(&nlk->sk);
 }
 
 /* This lock without WQ_FLAG_EXCLUSIVE is good on UP and it is _very_ bad on
@@ -710,14 +693,11 @@ static void deferred_put_nlk_sk(struct rcu_head *head)
 	struct netlink_sock *nlk = container_of(head, struct netlink_sock, rcu);
 	struct sock *sk = &nlk->sk;
 
+	kfree(nlk->groups);
+	nlk->groups = NULL;
+
 	if (!atomic_dec_and_test(&sk->sk_refcnt))
 		return;
-
-	if (nlk->cb_running && nlk->cb.done) {
-		INIT_WORK(&nlk->work, netlink_sock_destruct_work);
-		schedule_work(&nlk->work);
-		return;
-	}
 
 	sk_free(sk);
 }
@@ -768,6 +748,14 @@ static int netlink_release(struct socket *sock)
 				NETLINK_URELEASE, &n);
 	}
 
+	/* Terminate any outstanding dump */
+	if (nlk->cb_running) {
+		if (nlk->cb.done)
+			nlk->cb.done(&nlk->cb);
+		module_put(nlk->cb.module);
+		kfree_skb(nlk->cb.skb);
+	}
+
 	module_put(nlk->module);
 
 	if (netlink_is_kernel(sk)) {
@@ -787,9 +775,6 @@ static int netlink_release(struct socket *sock)
 		}
 		netlink_table_ungrab();
 	}
-
-	kfree(nlk->groups);
-	nlk->groups = NULL;
 
 	local_bh_disable();
 	sock_prot_inuse_add(sock_net(sk), &netlink_proto, -1);
@@ -922,9 +907,9 @@ netlink_update_subscriptions(struct sock *sk, unsigned int subscriptions)
 
 static int netlink_realloc_groups(struct sock *sk)
 {
+	unsigned long *new_groups, *old_groups = NULL;
 	struct netlink_sock *nlk = nlk_sk(sk);
 	unsigned int groups;
-	unsigned long *new_groups;
 	int err = 0;
 
 	netlink_table_grab();
@@ -938,18 +923,44 @@ static int netlink_realloc_groups(struct sock *sk)
 	if (nlk->ngroups >= groups)
 		goto out_unlock;
 
-	new_groups = krealloc(nlk->groups, NLGRPSZ(groups), GFP_ATOMIC);
-	if (new_groups == NULL) {
+	/* Can not use krealloc(), because the old buffer might be freed
+	 * immediately, while lockless readers (netlink diag dump and
+	 * /proc/net/netlink) can still be looking at it.
+	 */
+	new_groups = kzalloc(NLGRPSZ(groups), GFP_ATOMIC);
+	if (!new_groups) {
 		err = -ENOMEM;
 		goto out_unlock;
 	}
-	memset((char *)new_groups + NLGRPSZ(nlk->ngroups), 0,
-	       NLGRPSZ(groups) - NLGRPSZ(nlk->ngroups));
+	old_groups = nlk->groups;
+	if (old_groups)
+		memcpy(new_groups, old_groups, NLGRPSZ(nlk->ngroups));
 
-	nlk->groups = new_groups;
-	nlk->ngroups = groups;
+	/* Publish the new bitmap and its content: pairs with the address
+	 * dependency in lockless readers, which can pick up the new pointer
+	 * while still seeing the old (smaller) nlk->ngroups.
+	 */
+	smp_store_release(&nlk->groups, new_groups);
+
+	/* Then publish the new size: pairs with smp_load_acquire() from
+	 * lockless readers, so that they can not read NLGRPSZ(new ngroups)
+	 * bytes from the old buffer.
+	 */
+	smp_store_release(&nlk->ngroups, groups);
+
  out_unlock:
 	netlink_table_ungrab();
+
+	/* kfree_rcu_mightsleep() does not exist in this kernel and the
+	 * bitmap has no rcu_head; we are in process context (bind() or
+	 * setsockopt()) with the table released, so wait for a grace
+	 * period before freeing the old bitmap.
+	 */
+	if (old_groups) {
+		synchronize_rcu();
+		kfree(old_groups);
+	}
+
 	return err;
 }
 
@@ -974,7 +985,7 @@ static int netlink_bind(struct socket *sock, struct sockaddr *addr,
 	struct net *net = sock_net(sk);
 	struct netlink_sock *nlk = nlk_sk(sk);
 	struct sockaddr_nl *nladdr = (struct sockaddr_nl *)addr;
-	int err;
+	int err = 0;
 	long unsigned int groups = nladdr->nl_groups;
 	bool bound;
 
@@ -1026,18 +1037,20 @@ static int netlink_bind(struct socket *sock, struct sockaddr *addr,
 	/* No need for barriers here as we return to user-space without
 	 * using any of the bound attributes.
 	 */
+	netlink_lock_table();
 	if (!bound) {
 		err = nladdr->nl_pid ?
 			netlink_insert(sk, nladdr->nl_pid) :
 			netlink_autobind(sock);
 		if (err) {
 			netlink_undo_bind(BITS_PER_TYPE(u32), groups, sk);
-			return err;
+			goto unlock;
 		}
 	}
 
 	if (!groups && (nlk->groups == NULL || !(u32)nlk->groups[0]))
-		return 0;
+		goto unlock;
+	netlink_unlock_table();
 
 	netlink_table_grab();
 	netlink_update_subscriptions(sk, nlk->subscriptions +
@@ -1048,6 +1061,10 @@ static int netlink_bind(struct socket *sock, struct sockaddr *addr,
 	netlink_table_ungrab();
 
 	return 0;
+
+unlock:
+	netlink_unlock_table();
+	return err;
 }
 
 static int netlink_connect(struct socket *sock, struct sockaddr *addr,
@@ -1109,7 +1126,9 @@ static int netlink_getname(struct socket *sock, struct sockaddr *addr,
 		nladdr->nl_groups = netlink_group_mask(nlk->dst_group);
 	} else {
 		nladdr->nl_pid = nlk->portid;
+		netlink_lock_table();
 		nladdr->nl_groups = nlk->groups ? nlk->groups[0] : 0;
+		netlink_unlock_table();
 	}
 	return 0;
 }
@@ -2551,12 +2570,19 @@ static int netlink_seq_show(struct seq_file *seq, void *v)
 	} else {
 		struct sock *s = v;
 		struct netlink_sock *nlk = nlk_sk(s);
+		const unsigned long *groups;
+
+		/* Lockless read : netlink_realloc_groups() can change
+		 * nlk->groups under us. The old buffer is freed after an
+		 * RCU grace period, and this walk is RCU protected.
+		 */
+		groups = READ_ONCE(nlk->groups);
 
 		seq_printf(seq, "%pK %-3d %-6u %08x %-8d %-8d %d %-8d %-8d %-8lu\n",
 			   s,
 			   s->sk_protocol,
 			   nlk->portid,
-			   nlk->groups ? (u32)nlk->groups[0] : 0,
+			   groups ? (u32)groups[0] : 0,
 			   sk_rmem_alloc_get(s),
 			   sk_wmem_alloc_get(s),
 			   nlk->cb_running,

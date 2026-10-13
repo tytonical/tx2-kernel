@@ -373,7 +373,7 @@ void tcp_openreq_init_rwin(struct request_sock *req,
 	const struct tcp_sock *tp = tcp_sk(sk_listener);
 	u16 user_mss = READ_ONCE(tp->rx_opt.user_mss);
 	int full_space = tcp_full_space(sk_listener);
-	int mss = dst_metric_advmss(dst);
+	int mss = tcp_dst_advmss(dst);
 	u32 window_clamp;
 	__u8 rcv_wscale;
 
@@ -700,7 +700,7 @@ struct sock *tcp_check_req(struct sock *sk, struct sk_buff *skb,
 	 * elsewhere and is checked directly against the child socket rather
 	 * than req because user data may have been sent out.
 	 */
-	if ((flg & TCP_FLAG_ACK) && !fastopen &&
+	if ((flg & TCP_FLAG_ACK) && !(flg & TCP_FLAG_RST) && !fastopen &&
 	    (TCP_SKB_CB(skb)->ack_seq !=
 	     tcp_rsk(req)->snt_isn + 1))
 		return sk;
@@ -734,6 +734,16 @@ struct sock *tcp_check_req(struct sock *sk, struct sk_buff *skb,
 		/* Truncate SYN, it is out of window starting
 		   at tcp_rsk(req)->rcv_isn + 1. */
 		flg &= ~TCP_FLAG_SYN;
+	}
+
+	/* RFC 5961 section 3.2, as clarified by RFC 9293 section
+	 * 3.10.7.4, requires a challenge ACK for a non-exact
+	 * in-window RST in SYN-RECEIVED.
+	 */
+	if ((flg & TCP_FLAG_RST) &&
+	    TCP_SKB_CB(skb)->seq != tcp_rsk(req)->rcv_nxt) {
+		tcp_reqsk_send_challenge_ack(sk, skb, req);
+		return NULL;
 	}
 
 	/* RFC793: "second check the RST bit" and

@@ -131,7 +131,7 @@ static __u16 tcp_advertise_mss(struct sock *sk)
 	int mss = tp->advmss;
 
 	if (dst) {
-		unsigned int metric = dst_metric_advmss(dst);
+		unsigned int metric = tcp_dst_advmss(dst);
 
 		if (metric < mss) {
 			mss = metric;
@@ -2007,7 +2007,7 @@ static int tcp_mtu_probe(struct sock *sk)
 	struct net *net = sock_net(sk);
 	int len;
 	int probe_size;
-	int size_needed;
+	u64 size_needed;
 	int copy;
 	int mss_now;
 	int interval;
@@ -2030,7 +2030,7 @@ static int tcp_mtu_probe(struct sock *sk)
 	mss_now = tcp_current_mss(sk);
 	probe_size = tcp_mtu_to_mss(sk, (icsk->icsk_mtup.search_high +
 				    icsk->icsk_mtup.search_low) >> 1);
-	size_needed = probe_size + (tp->reordering + 1) * tp->mss_cache;
+	size_needed = probe_size + (tp->reordering + 1) * (u64)tp->mss_cache;
 	interval = icsk->icsk_mtup.search_high - icsk->icsk_mtup.search_low;
 	/* When misfortune happens, we are reprobing actively,
 	 * and then reprobe timer has expired. We stick with current
@@ -3190,7 +3190,7 @@ struct sk_buff *tcp_make_synack(const struct sock *sk, struct dst_entry *dst,
 	}
 	skb_dst_set(skb, dst);
 
-	mss = dst_metric_advmss(dst);
+	mss = tcp_dst_advmss(dst);
 	user_mss = READ_ONCE(tp->rx_opt.user_mss);
 	if (user_mss && user_mss < mss)
 		mss = user_mss;
@@ -3294,7 +3294,7 @@ static void tcp_connect_init(struct sock *sk)
 
 	if (!tp->window_clamp)
 		tp->window_clamp = dst_metric(dst, RTAX_WINDOW);
-	tp->advmss = dst_metric_advmss(dst);
+	tp->advmss = tcp_dst_advmss(dst);
 	if (tp->rx_opt.user_mss && tp->rx_opt.user_mss < tp->advmss)
 		tp->advmss = tp->rx_opt.user_mss;
 

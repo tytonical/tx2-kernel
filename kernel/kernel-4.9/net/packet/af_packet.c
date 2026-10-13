@@ -2496,6 +2496,8 @@ static int packet_snd_vnet_parse(struct msghdr *msg, size_t *len,
 static int packet_snd_vnet_gso(struct sk_buff *skb,
 			       struct virtio_net_hdr *vnet_hdr)
 {
+	u16 gso_size;
+
 	if (vnet_hdr->flags & VIRTIO_NET_HDR_F_NEEDS_CSUM) {
 		u16 s = __virtio16_to_cpu(vio_le(), vnet_hdr->csum_start);
 		u16 o = __virtio16_to_cpu(vio_le(), vnet_hdr->csum_offset);
@@ -2504,8 +2506,13 @@ static int packet_snd_vnet_gso(struct sk_buff *skb,
 			return -EINVAL;
 	}
 
-	skb_shinfo(skb)->gso_size =
-		__virtio16_to_cpu(vio_le(), vnet_hdr->gso_size);
+	gso_size = __virtio16_to_cpu(vio_le(), vnet_hdr->gso_size);
+
+	/* Kernel has a special handling for GSO_BY_FRAGS. */
+	if (gso_size == GSO_BY_FRAGS)
+		return -EINVAL;
+
+	skb_shinfo(skb)->gso_size = gso_size;
 	skb_shinfo(skb)->gso_type = vnet_hdr->gso_type;
 
 	/* Header must be checked, and gso_segs computed. */
@@ -2517,6 +2524,7 @@ static int packet_snd_vnet_gso(struct sk_buff *skb,
 static int tpacket_fill_skb(struct packet_sock *po, struct sk_buff *skb,
 		void *frame, struct net_device *dev, void *data, int tp_len,
 		__be16 proto, unsigned char *addr, int hlen, int copylen,
+		int hard_header_len,
 		const struct sockcm_cookie *sockc)
 {
 	union tpacket_uhdr ph;
@@ -2547,8 +2555,8 @@ static int tpacket_fill_skb(struct packet_sock *po, struct sk_buff *skb,
 	} else if (copylen) {
 		int hdrlen = min_t(int, copylen, tp_len);
 
-		skb_push(skb, dev->hard_header_len);
-		skb_put(skb, copylen - dev->hard_header_len);
+		skb_push(skb, hard_header_len);
+		skb_put(skb, copylen - hard_header_len);
 		err = skb_store_bits(skb, 0, data, hdrlen);
 		if (unlikely(err))
 			return err;
@@ -2590,6 +2598,9 @@ static int tpacket_fill_skb(struct packet_sock *po, struct sk_buff *skb,
 		len = ((to_write > len_max) ? len_max : to_write);
 	}
 
+	if (unlikely(!skb->len))
+		return -EINVAL;
+
 	skb_probe_transport_header(skb, 0);
 
 	return tp_len;
@@ -2599,7 +2610,8 @@ static int tpacket_parse_header(struct packet_sock *po, void *frame,
 				int size_max, void **data)
 {
 	union tpacket_uhdr ph;
-	int tp_len, off;
+	u32 tp_len;
+	int off;
 
 	ph.raw = frame;
 
@@ -2612,7 +2624,7 @@ static int tpacket_parse_header(struct packet_sock *po, void *frame,
 		break;
 	}
 	if (unlikely(tp_len > size_max)) {
-		pr_err("packet size is too long (%d > %d)\n", tp_len, size_max);
+		pr_err("packet size is too long (%u > %d)\n", tp_len, size_max);
 		return -EMSGSIZE;
 	}
 
@@ -2654,7 +2666,8 @@ static int tpacket_snd(struct packet_sock *po, struct msghdr *msg)
 {
 	struct sk_buff *skb = NULL;
 	struct net_device *dev;
-	struct virtio_net_hdr *vnet_hdr = NULL;
+	struct virtio_net_hdr vnet_hdr;
+	bool has_vnet_hdr = false;
 	struct sockcm_cookie sockc;
 	__be16 proto;
 	int err, reserve = 0;
@@ -2666,7 +2679,7 @@ static int tpacket_snd(struct packet_sock *po, struct msghdr *msg)
 	void *data;
 	int len_sum = 0;
 	int status = TP_STATUS_AVAILABLE;
-	int hlen, tlen, copylen = 0;
+	int hard_header_len, hlen, tlen, copylen = 0;
 	long timeo = 0;
 
 	mutex_lock(&po->pg_vec_lock);
@@ -2713,8 +2726,9 @@ static int tpacket_snd(struct packet_sock *po, struct msghdr *msg)
 			goto out_put;
 	}
 
+	hard_header_len = READ_ONCE(dev->hard_header_len);
 	if (po->sk.sk_socket->type == SOCK_RAW)
-		reserve = dev->hard_header_len;
+		reserve = hard_header_len;
 	size_max = po->tx_ring.frame_size
 		- (po->tp_hdrlen - sizeof(struct sockaddr_ll));
 
@@ -2745,24 +2759,28 @@ static int tpacket_snd(struct packet_sock *po, struct msghdr *msg)
 			goto tpacket_error;
 
 		status = TP_STATUS_SEND_REQUEST;
-		hlen = LL_RESERVED_SPACE(dev);
+		hlen = LL_RESERVED_SPACE_EX(dev, hard_header_len);
 		tlen = dev->needed_tailroom;
 		if (po->has_vnet_hdr) {
-			vnet_hdr = data;
-			data += sizeof(*vnet_hdr);
-			tp_len -= sizeof(*vnet_hdr);
-			if (tp_len < 0 ||
-			    __packet_snd_vnet_parse(vnet_hdr, tp_len)) {
+			data += sizeof(vnet_hdr);
+			tp_len -= sizeof(vnet_hdr);
+			if (tp_len < 0) {
+				tp_len = -EINVAL;
+				goto tpacket_error;
+			}
+			memcpy(&vnet_hdr, data - sizeof(vnet_hdr), sizeof(vnet_hdr));
+			if (__packet_snd_vnet_parse(&vnet_hdr, tp_len)) {
 				tp_len = -EINVAL;
 				goto tpacket_error;
 			}
 			copylen = __virtio16_to_cpu(vio_le(),
-						    vnet_hdr->hdr_len);
+						    vnet_hdr.hdr_len);
+			has_vnet_hdr = true;
 		}
-		copylen = max_t(int, copylen, dev->hard_header_len);
+		copylen = max_t(int, copylen, hard_header_len);
 		skb = sock_alloc_send_skb(&po->sk,
 				hlen + tlen + sizeof(struct sockaddr_ll) +
-				(copylen - dev->hard_header_len),
+				(copylen - hard_header_len),
 				!need_wait, &err);
 
 		if (unlikely(skb == NULL)) {
@@ -2772,7 +2790,8 @@ static int tpacket_snd(struct packet_sock *po, struct msghdr *msg)
 			goto out_status;
 		}
 		tp_len = tpacket_fill_skb(po, skb, ph, dev, data, tp_len, proto,
-					  addr, hlen, copylen, &sockc);
+					  addr, hlen, copylen, hard_header_len,
+					  &sockc);
 		if (likely(tp_len >= 0) &&
 		    tp_len > dev->mtu + reserve &&
 		    !po->has_vnet_hdr &&
@@ -2794,7 +2813,7 @@ tpacket_error:
 			}
 		}
 
-		if (po->has_vnet_hdr && packet_snd_vnet_gso(skb, vnet_hdr)) {
+		if (has_vnet_hdr && packet_snd_vnet_gso(skb, &vnet_hdr)) {
 			tp_len = -EINVAL;
 			goto tpacket_error;
 		}
@@ -3069,6 +3088,7 @@ static int packet_release(struct socket *sock)
 
 	spin_lock(&po->bind_lock);
 	unregister_prot_hook(sk, false);
+	WRITE_ONCE(po->num, 0);
 	packet_cached_dev_reset(po);
 
 	if (po->prot_hook.dev) {
@@ -3730,8 +3750,12 @@ packet_setsockopt(struct socket *sock, int level, int optname, char __user *optv
 		return ret;
 	}
 
-	case PACKET_RX_RING:
 	case PACKET_TX_RING:
+		/* TX rings are not used on this platform. Refuse them rather
+		 * than carry the mmap'd transmit path (see CVE-2026-80841).
+		 */
+		return -EOPNOTSUPP;
+	case PACKET_RX_RING:
 	{
 		union tpacket_req_u req_u;
 		int len;
@@ -4419,10 +4443,10 @@ static int packet_set_ring(struct sock *sk, union tpacket_req_u *req_u,
 	spin_lock(&po->bind_lock);
 	was_running = po->running;
 	num = po->num;
-	if (was_running) {
-		WRITE_ONCE(po->num, 0);
+	WRITE_ONCE(po->num, 0);
+	if (was_running)
 		__unregister_prot_hook(sk, false);
-	}
+
 	spin_unlock(&po->bind_lock);
 
 	synchronize_net();
@@ -4436,14 +4460,14 @@ static int packet_set_ring(struct sock *sk, union tpacket_req_u *req_u,
 		rb->frame_max = (req->tp_frame_nr - 1);
 		rb->head = 0;
 		rb->frame_size = req->tp_frame_size;
+		po->prot_hook.func = (po->rx_ring.pg_vec) ?
+						tpacket_rcv : packet_rcv;
 		spin_unlock_bh(&rb_queue->lock);
 
 		swap(rb->pg_vec_order, order);
 		swap(rb->pg_vec_len, req->tp_block_nr);
 
 		rb->pg_vec_pages = req->tp_block_size/PAGE_SIZE;
-		po->prot_hook.func = (po->rx_ring.pg_vec) ?
-						tpacket_rcv : packet_rcv;
 		skb_queue_purge(rb_queue);
 		if (atomic_read(&po->mapped))
 			pr_err("packet_mmap: vma is busy: %d\n",
@@ -4452,10 +4476,14 @@ static int packet_set_ring(struct sock *sk, union tpacket_req_u *req_u,
 	mutex_unlock(&po->pg_vec_lock);
 
 	spin_lock(&po->bind_lock);
-	if (was_running) {
-		WRITE_ONCE(po->num, num);
+	WRITE_ONCE(po->num, num);
+	/*
+	 * NETDEV_UNREGISTER may have invalidated the binding while bind_lock
+	 * was dropped above.  Do not re-add a fanout hook to a dead device.
+	 */
+	if (was_running && READ_ONCE(po->ifindex) != -1)
 		register_prot_hook(sk);
-	}
+
 	spin_unlock(&po->bind_lock);
 	if (pg_vec && (po->tp_version > TPACKET_V2)) {
 		/* Because we don't support block-based V3 on tx-ring */

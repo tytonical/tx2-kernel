@@ -245,7 +245,16 @@ void __dst_free(struct dst_entry *dst)
 }
 EXPORT_SYMBOL(__dst_free);
 
-struct dst_entry *dst_destroy(struct dst_entry * dst)
+static void dst_count_dec(struct dst_entry *dst)
+{
+	if (!(dst->flags & DST_NOCOUNT))
+		dst_entries_add(dst->ops, -1);
+}
+
+/* @counted: the entries count of @dst itself was already decremented
+ * (by dst_release()); children are always decremented here.
+ */
+static struct dst_entry *__dst_destroy(struct dst_entry *dst, bool counted)
 {
 	struct dst_entry *child;
 
@@ -254,8 +263,9 @@ struct dst_entry *dst_destroy(struct dst_entry * dst)
 again:
 	child = dst->child;
 
-	if (!(dst->flags & DST_NOCOUNT))
-		dst_entries_add(dst->ops, -1);
+	if (!counted)
+		dst_count_dec(dst);
+	counted = false;
 
 	if (dst->ops->destroy)
 		dst->ops->destroy(dst);
@@ -286,13 +296,18 @@ again:
 	}
 	return NULL;
 }
+
+struct dst_entry *dst_destroy(struct dst_entry *dst)
+{
+	return __dst_destroy(dst, false);
+}
 EXPORT_SYMBOL(dst_destroy);
 
 static void dst_destroy_rcu(struct rcu_head *head)
 {
 	struct dst_entry *dst = container_of(head, struct dst_entry, rcu_head);
 
-	dst = dst_destroy(dst);
+	dst = __dst_destroy(dst, true);
 	if (dst)
 		__dst_free(dst);
 }
@@ -307,8 +322,10 @@ void dst_release(struct dst_entry *dst)
 		if (unlikely(newrefcnt < 0))
 			net_warn_ratelimited("%s: dst:%p refcnt:%d\n",
 					     __func__, dst, newrefcnt);
-		if (!newrefcnt && unlikely(nocache))
+		if (!newrefcnt && unlikely(nocache)) {
+			dst_count_dec(dst);
 			call_rcu(&dst->rcu_head, dst_destroy_rcu);
+		}
 	}
 }
 EXPORT_SYMBOL(dst_release);

@@ -668,7 +668,7 @@ static int fanotify_add_vfsmount_mark(struct fsnotify_group *group,
 	added = fanotify_mark_add_to_mask(fsn_mark, mask, flags);
 	mutex_unlock(&group->mark_mutex);
 
-	if (added & ~real_mount(mnt)->mnt_fsnotify_mask)
+	if (added)
 		fsnotify_recalc_vfsmount_mask(mnt);
 
 	fsnotify_put_mark(fsn_mark);
@@ -706,7 +706,7 @@ static int fanotify_add_inode_mark(struct fsnotify_group *group,
 	added = fanotify_mark_add_to_mask(fsn_mark, mask, flags);
 	mutex_unlock(&group->mark_mutex);
 
-	if (added & ~inode->i_fsnotify_mask)
+	if (added)
 		fsnotify_recalc_inode_mask(inode);
 
 	fsnotify_put_mark(fsn_mark);

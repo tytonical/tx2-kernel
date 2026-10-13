@@ -845,7 +845,10 @@ static int qrtr_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
 		}
 		break;
 	case SIOCGSTAMP:
+		/* sock_get_timestamp() takes the socket lock itself. */
+		release_sock(sk);
 		rc = sock_get_timestamp(sk, argp);
+		lock_sock(sk);
 		break;
 	case SIOCADDRT:
 	case SIOCDELRT:

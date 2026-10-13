@@ -796,7 +796,15 @@ struct signal_struct {
 
 	struct mutex cred_guard_mutex;	/* guard against foreign influences on
 					 * credential calculations
-					 * (notably. ptrace) */
+					 * (notably. ptrace)
+					 * Deprecated do not use in new code.
+					 * Use exec_update_lock instead.
+					 */
+	struct rw_semaphore exec_update_lock;	/* Held while task_struct is
+						 * being updated during exec,
+						 * and may have inconsistent
+						 * permissions.
+						 */
 };
 
 /*
@@ -1685,6 +1693,10 @@ struct task_struct {
 	unsigned :0; /* force alignment to the next boundary */
 
 	/* unserialized, strictly 'current' */
+
+	/* Save user-dumpable when mm goes away */
+	unsigned user_dumpable:1;
+
 	unsigned in_execve:1; /* bit to tell LSMs we're in execve */
 	unsigned in_iowait:1;
 #if !defined(TIF_RESTORE_SIGMASK)

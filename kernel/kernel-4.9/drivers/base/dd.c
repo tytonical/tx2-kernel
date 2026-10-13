@@ -349,7 +349,7 @@ static int really_probe(struct device *dev, struct device_driver *drv)
 	}
 
 re_probe:
-	dev->driver = drv;
+	WRITE_ONCE(dev->driver, drv);
 
 	/* If using pinctrl, bind pins now before probing */
 	ret = pinctrl_bind_pins(dev);
@@ -388,7 +388,7 @@ re_probe:
 
 		devres_release_all(dev);
 		driver_sysfs_remove(dev);
-		dev->driver = NULL;
+		WRITE_ONCE(dev->driver, NULL);
 		dev_set_drvdata(dev, NULL);
 		if (dev->pm_domain && dev->pm_domain->dismiss)
 			dev->pm_domain->dismiss(dev);
@@ -415,7 +415,7 @@ probe_failed:
 pinctrl_bind_failed:
 	devres_release_all(dev);
 	driver_sysfs_remove(dev);
-	dev->driver = NULL;
+	WRITE_ONCE(dev->driver, NULL);
 	dev_set_drvdata(dev, NULL);
 	if (dev->pm_domain && dev->pm_domain->dismiss)
 		dev->pm_domain->dismiss(dev);
@@ -653,7 +653,7 @@ static int __device_attach(struct device *dev, bool allow_async)
 		if (ret == 0)
 			ret = 1;
 		else {
-			dev->driver = NULL;
+			WRITE_ONCE(dev->driver, NULL);
 			ret = 0;
 		}
 	} else {
@@ -804,7 +804,7 @@ static void __device_release_driver(struct device *dev)
 		else if (drv->remove)
 			drv->remove(dev);
 		devres_release_all(dev);
-		dev->driver = NULL;
+		WRITE_ONCE(dev->driver, NULL);
 		dev_set_drvdata(dev, NULL);
 		if (dev->pm_domain && dev->pm_domain->dismiss)
 			dev->pm_domain->dismiss(dev);

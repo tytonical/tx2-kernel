@@ -604,6 +604,7 @@ enum {
  */
 #define EXT4_EX_NOCACHE				0x40000000
 #define EXT4_EX_FORCE_CACHE			0x20000000
+#define EXT4_EX_NOFAIL				0x10000000
 
 /*
  * Flags used by ext4_free_blocks
@@ -1525,6 +1526,37 @@ static inline struct ext4_sb_info *EXT4_SB(struct super_block *sb)
 static inline struct ext4_inode_info *EXT4_I(struct inode *inode)
 {
 	return container_of(inode, struct ext4_inode_info, vfs_inode);
+}
+
+/*
+ * 4.9 has no memalloc_nofs_save()/memalloc_nofs_restore(); use the
+ * memalloc_noio_* scope API instead, which also clears __GFP_FS and so
+ * prevents recursion into filesystem reclaim while the lock is held.
+ */
+static inline unsigned int ext4_writepages_down_read(struct super_block *sb)
+{
+	percpu_down_read(&EXT4_SB(sb)->s_writepages_rwsem);
+	return memalloc_noio_save();
+}
+
+static inline void ext4_writepages_up_read(struct super_block *sb,
+					   unsigned int ctx)
+{
+	memalloc_noio_restore(ctx);
+	percpu_up_read(&EXT4_SB(sb)->s_writepages_rwsem);
+}
+
+static inline unsigned int ext4_writepages_down_write(struct super_block *sb)
+{
+	percpu_down_write(&EXT4_SB(sb)->s_writepages_rwsem);
+	return memalloc_noio_save();
+}
+
+static inline void ext4_writepages_up_write(struct super_block *sb,
+					    unsigned int ctx)
+{
+	memalloc_noio_restore(ctx);
+	percpu_up_write(&EXT4_SB(sb)->s_writepages_rwsem);
 }
 
 static inline struct timespec ext4_current_time(struct inode *inode)

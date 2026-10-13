@@ -300,8 +300,8 @@ static inline struct inet6_dev *in6_dev_get(const struct net_device *dev)
 
 	rcu_read_lock();
 	idev = rcu_dereference(dev->ip6_ptr);
-	if (idev)
-		atomic_inc(&idev->refcnt);
+	if (idev && !atomic_inc_not_zero(&idev->refcnt))
+		idev = NULL;
 	rcu_read_unlock();
 	return idev;
 }
@@ -331,6 +331,11 @@ static inline void in6_dev_hold(struct inet6_dev *idev)
 	atomic_inc(&idev->refcnt);
 }
 
+static inline bool in6_dev_hold_safe(struct inet6_dev *idev)
+{
+	return atomic_inc_not_zero(&idev->refcnt);
+}
+
 void inet6_ifa_finish_destroy(struct inet6_ifaddr *ifp);
 
 static inline void in6_ifa_put(struct inet6_ifaddr *ifp)
@@ -349,6 +354,10 @@ static inline void in6_ifa_hold(struct inet6_ifaddr *ifp)
 	atomic_inc(&ifp->refcnt);
 }
 
+static inline bool in6_ifa_hold_safe(struct inet6_ifaddr *ifp)
+{
+	return atomic_inc_not_zero(&ifp->refcnt);
+}
 
 /*
  *	compute link-local solicited-node multicast address

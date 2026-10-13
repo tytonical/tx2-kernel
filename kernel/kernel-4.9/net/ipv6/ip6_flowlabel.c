@@ -121,11 +121,6 @@ static void fl_release(struct ip6_flowlabel *fl)
 		if (time_after(ttd, fl->expires))
 			fl->expires = ttd;
 		ttd = fl->expires;
-		if (fl->opt && fl->share == IPV6_FL_S_EXCL) {
-			struct ipv6_txoptions *opt = fl->opt;
-			fl->opt = NULL;
-			kfree(opt);
-		}
 		if (!timer_pending(&ip6_fl_gc_timer) ||
 		    time_after(ip6_fl_gc_timer.expires, ttd))
 			mod_timer(&ip6_fl_gc_timer, ttd);
@@ -446,6 +441,21 @@ done:
 	return NULL;
 }
 
+static bool fl_sock_at_lease_limit(struct ipv6_pinfo *np)
+{
+	struct ipv6_fl_socklist *sfl;
+	int count = 0;
+
+	rcu_read_lock_bh();
+	for_each_sk_fl_rcu(np, sfl) {
+		if (++count >= FL_MAX_PER_SOCK)
+			break;
+	}
+	rcu_read_unlock_bh();
+
+	return count >= FL_MAX_PER_SOCK;
+}
+
 static int mem_check(struct sock *sk)
 {
 	struct ipv6_pinfo *np = inet6_sk(sk);
@@ -648,6 +658,10 @@ recheck:
 
 				err = -ENOMEM;
 				if (!sfl1)
+					goto release;
+				err = -ENOBUFS;
+				if (fl_sock_at_lease_limit(np) &&
+				    !capable(CAP_NET_ADMIN))
 					goto release;
 				if (fl->linger > fl1->linger)
 					fl1->linger = fl->linger;

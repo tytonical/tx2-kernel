@@ -3528,22 +3528,16 @@ bool tcp_oow_rate_limited(struct net *net, const struct sk_buff *skb,
 	return __tcp_oow_rate_limited(net, mib_idx, last_oow_ack_time);
 }
 
-/* RFC 5961 7 [ACK Throttling] */
-static void tcp_send_challenge_ack(struct sock *sk, const struct sk_buff *skb)
+/* Consume one slot from the host-wide RFC 5961 challenge ACK quota.
+ * Returns true if a challenge ACK may be sent.
+ */
+static bool tcp_challenge_ack_allowed(void)
 {
 	/* unprotected vars, we dont care of overwrites */
 	static u32 challenge_timestamp;
 	static unsigned int challenge_count;
-	struct tcp_sock *tp = tcp_sk(sk);
 	u32 count, now;
 
-	/* First check our per-socket dupack rate limit. */
-	if (__tcp_oow_rate_limited(sock_net(sk),
-				   LINUX_MIB_TCPACKSKIPPEDCHALLENGE,
-				   &tp->last_oow_ack_time))
-		return;
-
-	/* Then check host-wide RFC 5961 rate limit. */
 	now = jiffies / HZ;
 	if (now != challenge_timestamp) {
 		u32 half = (sysctl_tcp_challenge_ack_limit + 1) >> 1;
@@ -3555,8 +3549,45 @@ static void tcp_send_challenge_ack(struct sock *sk, const struct sk_buff *skb)
 	count = READ_ONCE(challenge_count);
 	if (count > 0) {
 		WRITE_ONCE(challenge_count, count - 1);
+		return true;
+	}
+	return false;
+}
+
+/* RFC 5961 7 [ACK Throttling] */
+static void tcp_send_challenge_ack(struct sock *sk, const struct sk_buff *skb)
+{
+	struct tcp_sock *tp = tcp_sk(sk);
+
+	/* First check our per-socket dupack rate limit. */
+	if (__tcp_oow_rate_limited(sock_net(sk),
+				   LINUX_MIB_TCPACKSKIPPEDCHALLENGE,
+				   &tp->last_oow_ack_time))
+		return;
+
+	/* Then check host-wide RFC 5961 rate limit. */
+	if (tcp_challenge_ack_allowed()) {
 		NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPCHALLENGEACK);
 		tcp_send_ack(sk);
+	}
+}
+
+/* Send a challenge ACK from a SYN-RECEIVED request socket. Uses
+ * __tcp_oow_rate_limited() directly so that an RST carrying payload
+ * cannot bypass the per-request rate limit.
+ */
+void tcp_reqsk_send_challenge_ack(struct sock *sk, struct sk_buff *skb,
+				  struct request_sock *req)
+{
+	struct net *net = sock_net(sk);
+
+	if (__tcp_oow_rate_limited(net, LINUX_MIB_TCPACKSKIPPEDCHALLENGE,
+				   &tcp_rsk(req)->last_oow_ack_time))
+		return;
+
+	if (tcp_challenge_ack_allowed()) {
+		NET_INC_STATS(net, LINUX_MIB_TCPCHALLENGEACK);
+		req->rsk_ops->send_ack(sk, skb, req);
 	}
 }
 
@@ -3673,8 +3704,12 @@ static int tcp_ack(struct sock *sk, const struct sk_buff *skb, int flag)
 	 * then we can probably ignore it.
 	 */
 	if (before(ack, prior_snd_una)) {
+		u32 max_window;
+
+		/* do not accept ACK for bytes we never sent. */
+		max_window = min_t(u64, tp->max_window, tp->bytes_acked);
 		/* RFC 5961 5.2 [Blind Data Injection Attack].[Mitigation] */
-		if (before(ack, prior_snd_una - tp->max_window)) {
+		if (before(ack, prior_snd_una - max_window)) {
 			if (!(flag & FLAG_NO_CHALLENGE_ACK))
 				tcp_send_challenge_ack(sk, skb);
 			return -1;

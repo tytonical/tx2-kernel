@@ -450,6 +450,13 @@ struct sock *tcp_v4_syn_recv_sock(const struct sock *sk, struct sk_buff *skb,
 				  struct dst_entry *dst,
 				  struct request_sock *req_unhash,
 				  bool *own_req);
+struct sock *__tcp_v4_syn_recv_sock(const struct sock *sk, struct sk_buff *skb,
+				    struct request_sock *req,
+				    struct dst_entry *dst,
+				    struct request_sock *req_unhash,
+				    bool *own_req,
+				    void (*opt_child_init)(struct sock *newsk,
+							   const struct sock *sk));
 int tcp_v4_do_rcv(struct sock *sk, struct sk_buff *skb);
 int tcp_v4_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len);
 int tcp_connect(struct sock *sk);
@@ -1299,6 +1306,11 @@ static inline int tcp_full_space(const struct sock *sk)
 	return tcp_win_from_space(sk->sk_rcvbuf);
 }
 
+static inline u32 tcp_dst_advmss(const struct dst_entry *dst)
+{
+	return max_t(u32, dst_metric_advmss(dst), TCP_MIN_MSS);
+}
+
 extern void tcp_openreq_init_rwin(struct request_sock *req,
 				  const struct sock *sk_listener,
 				  const struct dst_entry *dst);
@@ -1387,6 +1399,8 @@ static inline bool tcp_paws_reject(const struct tcp_options_received *rx_opt,
 
 bool tcp_oow_rate_limited(struct net *net, const struct sk_buff *skb,
 			  int mib_idx, u32 *last_oow_ack_time);
+void tcp_reqsk_send_challenge_ack(struct sock *sk, struct sk_buff *skb,
+				  struct request_sock *req);
 
 static inline void tcp_mib_init(struct net *net)
 {

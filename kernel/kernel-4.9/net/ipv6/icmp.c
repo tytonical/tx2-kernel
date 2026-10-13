@@ -213,6 +213,8 @@ static bool icmpv6_xrlim_allow(struct sock *sk, u8 type,
 			res = inet_peer_xrlim_allow(peer, tmo);
 			if (peer)
 				inet_putpeer(peer);
+			if (res)
+				icmp_global_consume();
 		}
 	}
 	dst_release(dst);
@@ -736,6 +738,9 @@ void icmpv6_notify(struct sk_buff *skb, u8 type, u8 code, __be32 info)
 
 	/* Checkin header including 8 bytes of inner protocol header. */
 	if (!pskb_may_pull(skb, inner_offset+8))
+		goto out;
+
+	if (nexthdr == IPPROTO_RAW)
 		goto out;
 
 	/* BUGGG_FUTURE: we should try to parse exthdrs in this packet.

@@ -1226,15 +1226,12 @@ static int nr_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
 	}
 
 	case SIOCGSTAMP:
-		lock_sock(sk);
+		/* sock_get_timestamp() takes the socket lock itself. */
 		ret = sock_get_timestamp(sk, argp);
-		release_sock(sk);
 		return ret;
 
 	case SIOCGSTAMPNS:
-		lock_sock(sk);
 		ret = sock_get_timestampns(sk, argp);
-		release_sock(sk);
 		return ret;
 
 	case SIOCGIFADDR:

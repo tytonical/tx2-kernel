@@ -41,6 +41,7 @@ static const char *proc_ns_get_link(struct dentry *dentry,
 	struct task_struct *task;
 	struct path ns_path;
 	void *error = ERR_PTR(-EACCES);
+	int err;
 
 	if (!dentry)
 		return ERR_PTR(-ECHILD);
@@ -49,11 +50,19 @@ static const char *proc_ns_get_link(struct dentry *dentry,
 	if (!task)
 		return error;
 
+	err = down_read_killable(&task->signal->exec_update_lock);
+	if (err) {
+		error = ERR_PTR(err);
+		goto out_put_task;
+	}
+
 	if (ptrace_may_access(task, PTRACE_MODE_READ_FSCREDS)) {
 		error = ns_get_path(&ns_path, task, ns_ops);
 		if (!error)
 			nd_jump_link(&ns_path);
 	}
+	up_read(&task->signal->exec_update_lock);
+out_put_task:
 	put_task_struct(task);
 	return error;
 }
@@ -70,11 +79,18 @@ static int proc_ns_readlink(struct dentry *dentry, char __user *buffer, int bufl
 	if (!task)
 		return res;
 
+	res = down_read_killable(&task->signal->exec_update_lock);
+	if (res)
+		goto out_put_task;
+
+	res = -EACCES;
 	if (ptrace_may_access(task, PTRACE_MODE_READ_FSCREDS)) {
 		res = ns_get_name(name, sizeof(name), task, ns_ops);
 		if (res >= 0)
 			res = readlink_copy(buffer, buflen, name);
 	}
+	up_read(&task->signal->exec_update_lock);
+out_put_task:
 	put_task_struct(task);
 	return res;
 }
