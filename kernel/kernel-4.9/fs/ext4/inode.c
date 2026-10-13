@@ -4760,6 +4760,17 @@ struct inode *__ext4_iget(struct super_block *sb, unsigned long ino,
 		ret = -EFSCORRUPTED;
 		goto bad_inode;
 	}
+	/*
+	 * Inline data is not supported on this platform (see
+	 * EXT4_FEATURE_INCOMPAT_SUPP), so an inode carrying the flag can only
+	 * come from a corrupted or crafted filesystem.
+	 */
+	if (ext4_test_inode_flag(inode, EXT4_INODE_INLINE_DATA)) {
+		EXT4_ERROR_INODE(inode,
+				 "iget: inline data flag set but inline data is not supported");
+		ret = -EFSCORRUPTED;
+		goto bad_inode;
+	}
 	ei->i_disksize = inode->i_size;
 #ifdef CONFIG_QUOTA
 	ei->i_reserved_quota = 0;
