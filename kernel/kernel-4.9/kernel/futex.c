@@ -3522,10 +3522,10 @@ static void __user *futex_get_robust_list_common(int pid, bool compat)
 	rcu_read_unlock();
 
 	/*
-	 * Hold cred_guard_mutex to serialize with concurrent exec()
+	 * Hold exec_update_lock to serialize with concurrent exec()
 	 * so ptrace_may_access() is checked against stable credentials
 	 */
-	ret = mutex_lock_killable(&p->signal->cred_guard_mutex);
+	ret = down_read_killable(&p->signal->exec_update_lock);
 	if (ret)
 		goto err_put;
 
@@ -3535,13 +3535,13 @@ static void __user *futex_get_robust_list_common(int pid, bool compat)
 
 	head = futex_task_robust_list(p, compat);
 
-	mutex_unlock(&p->signal->cred_guard_mutex);
+	up_read(&p->signal->exec_update_lock);
 	put_task_struct(p);
 
 	return head;
 
 err_unlock:
-	mutex_unlock(&p->signal->cred_guard_mutex);
+	up_read(&p->signal->exec_update_lock);
 err_put:
 	put_task_struct(p);
 	return (void __user *)ERR_PTR(ret);
