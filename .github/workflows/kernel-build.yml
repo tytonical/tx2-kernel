@@ -1,12 +1,16 @@
-# Build the TX2 NX ANPR kernel (tegra_defconfig + configs/tx2nx-anpr.config)
-# with Ubuntu's aarch64 cross toolchain, and publish the image, DTBs and
-# modules as artifacts.
+# Build the TX2 NX kernel (tegra_defconfig + configs/tx2nx-anpr.config) with Ubuntu's aarch64
+# cross toolchain (the release toolchain) and publish the kernel package, the fix list and an
+# OpenVEX document as artifacts. When a GitHub release is published on a tag
+# "release/<version>" (for example release/4.9.337-tyton-1), the kernel is built with that
+# version as its release string (uname -r) and the files are attached to the release.
 name: kernel-build
 
 on:
   push:
   pull_request:
   workflow_dispatch:
+  release:
+    types: [published]
 
 permissions:
   contents: read
@@ -25,44 +29,99 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     env:
       ARCH: arm64
       CROSS_COMPILE: aarch64-linux-gnu-
+      # Fixed build identity in the kernel banner, so builds do not depend on the runner.
+      KBUILD_BUILD_USER: runner
+      KBUILD_BUILD_HOST: github
       OUT: ${{ github.workspace }}/out
       STAGE: ${{ github.workspace }}/stage
+      DIST: ${{ github.workspace }}/dist
     steps:
+      # Full history and tags: the fix list is generated from the commits since the
+      # l4t-r32.7.6-tarball tag.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            gcc-aarch64-linux-gnu bc bison flex libssl-dev kmod xz-utils
+            gcc-aarch64-linux-gnu bc bison flex libssl-dev kmod xz-utils python3
           aarch64-linux-gnu-gcc --version | head -1
           make --version | head -1
 
+      # Release builds take the version from the tag (release/<version>); it must start with the
+      # kernel's own version (checked again by build-kernel.sh). Other builds are
+      # <kernelversion>-dev-<sha>.
+      - name: Determine version
+        id: version
+        env:
+          EVENT: ${{ github.event_name }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          kver=$(make -s -C kernel/kernel-4.9 kernelversion)
+          if [ "$EVENT" = release ]; then
+            case $TAG in
+              release/*) version=${TAG#release/} ;;
+              *) echo "::error::release tag '$TAG' is not of the form release/<version>"; exit 1 ;;
+            esac
+            if ! [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9._]+)+$ ]]; then
+              echo "::error::version '$version' from tag '$TAG' is not <kernelversion>-<suffix>"; exit 1
+            fi
+          else
+            version=$kver-dev-${GITHUB_SHA::12}
+          fi
+          echo "kernel version $kver, release $version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
       # Same script as local builds: merges the fragment onto tegra_defconfig,
-      # fails if Kconfig overrides any fragment setting or if a required driver
-      # object is missing, then builds Image, modules and the TX2 NX DTBs.
+      # fails if Kconfig overrides any fragment setting, if a required driver
+      # object is missing, or if kernel.release differs from KERNEL_RELEASE.
       - name: Build kernel
+        env:
+          KERNEL_RELEASE: ${{ steps.version.outputs.version }}
         run: scripts/build-kernel.sh "$OUT" 2>&1 | tee build.log
 
-      - name: Stage image, DTBs and modules
+      - name: Package kernel (Image, DTBs, modules)
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
           KSRC=kernel/kernel-4.9
-          mkdir -p "$STAGE/boot/dtb"
+          release=$(cat "$OUT/include/config/kernel.release")
+          [ "$release" = "$VERSION" ]
+          mkdir -p "$STAGE/boot/dtb" "$DIST"
           cp "$OUT/arch/arm64/boot/Image" "$OUT/System.map" "$OUT/.config" \
              "$OUT/Module.symvers" "$STAGE/boot/"
           find "$OUT/arch/arm64/boot/dts" -name 'tegra186-p3636-*.dtb' \
              -exec cp {} "$STAGE/boot/dtb/" \;
           make -C "$KSRC" O="$OUT" INSTALL_MOD_PATH="$STAGE" INSTALL_MOD_STRIP=1 \
              modules_install
-          release=$(cat "$OUT/include/config/kernel.release")
           rm -f "$STAGE/lib/modules/$release/build" "$STAGE/lib/modules/$release/source"
           echo "$release ${GITHUB_SHA}" > "$STAGE/boot/kernel-version.txt"
           ls -l "$STAGE/boot" "$STAGE/boot/dtb"
-          tar -C "$STAGE" -cJf "tx2nx-kernel-${release}-${GITHUB_SHA::12}.tar.xz" boot lib
+          tar -C "$STAGE" -cJf "$DIST/tx2nx-kernel-$release.tar.xz" --owner=0 --group=0 boot lib
+
+      # The fix list and the VEX come from the commit trailers and docs/cve-baseline.tsv.
+      # The committed docs/FIXES.md must be up to date.
+      - name: Fix list and OpenVEX
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          python3 scripts/fixes.py md > "$DIST/FIXES-$VERSION.md"
+          if ! diff -q docs/FIXES.md "$DIST/FIXES-$VERSION.md" >/dev/null; then
+            echo "::error::docs/FIXES.md is out of date; run scripts/fixes.py md > docs/FIXES.md"
+            diff docs/FIXES.md "$DIST/FIXES-$VERSION.md" | head -40
+            exit 1
+          fi
+          python3 scripts/fixes.py vex --version "$VERSION" --commit "$GITHUB_SHA" \
+            > "$DIST/tx2nx-kernel-$VERSION.openvex.json"
+          (cd "$DIST" && sha256sum *.tar.xz *.md *.json > SHA256SUMS && cat SHA256SUMS)
 
       - name: Warnings summary
         if: always()
@@ -72,8 +131,8 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: tx2nx-kernel
-          path: tx2nx-kernel-*.tar.xz
+          name: tx2nx-kernel-${{ steps.version.outputs.version }}
+          path: dist/*
           if-no-files-found: error
 
       - uses: actions/upload-artifact@v4
@@ -81,3 +140,24 @@ jobs:
         with:
           name: build-log
           path: build.log
+
+  # Attach the files to the GitHub release. Only this job can write to the repository.
+  release:
+    if: github.event_name == 'release'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: tx2nx-kernel-${{ needs.build.outputs.version }}
+          path: dist
+
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          (cd dist && sha256sum -c SHA256SUMS)
+          gh release upload "$TAG" dist/* --clobber --repo "$GITHUB_REPOSITORY"
