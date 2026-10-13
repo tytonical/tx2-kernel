@@ -84,7 +84,9 @@ while read -r line; do
 done < "$FRAG"
 [ $bad -eq 0 ] || exit 1
 
-make -C "$KSRC" O="$OUT" -j"$(nproc)" Image modules
+# JOBS limits parallel compiles (default: all CPUs). GCC 13 needs several hundred MB per job for
+# the larger NVIDIA sources, so small machines should set it lower.
+make -C "$KSRC" O="$OUT" -j"${JOBS:-$(nproc)}" Image modules
 for d in $DTBS; do
 	make -C "$KSRC" O="$OUT" "$DTS/$d"
 done
