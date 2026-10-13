@@ -2,7 +2,7 @@
 """List the fixes applied to this tree, as Markdown or as an OpenVEX document.
 
 Usage:
-  scripts/fixes.py md   [--range A..B] > docs/FIXES.md
+  scripts/fixes.py md   [--range A..B] > FIXES.md
   scripts/fixes.py vex  [--range A..B] --version V [--commit SHA] > fixes.openvex.json
 
 Fixes are read from commit trailers between the pristine NVIDIA tarball import and HEAD:
@@ -12,8 +12,8 @@ Fixes are read from commit trailers between the pristine NVIDIA tarball import a
   Prerequisite-for: ...   upstream prerequisite of a later backport
   Backported-from: <sha>  stable commit used as the base of the port
 and the "commit <sha> upstream." line. Commits with an upstream line but none of the CVE
-trailers are listed as hardening fixes. Commits that only touch docs/ are not listed, so update
-docs/FIXES.md in a docs-only commit after the changes it describes.
+trailers are listed as hardening fixes. CI publishes both outputs with each build; they are not
+committed.
 
 The VEX also includes docs/cve-baseline.tsv, a scan result for this tree's configuration:
   not_compiled   the affected source files are not compiled in this configuration
@@ -64,11 +64,6 @@ def commits(rev_range):
         yield c
 
 
-def docs_only(sha):
-    files = git('show', '--name-only', '--format=', sha).split()
-    return bool(files) and all(f.startswith('docs/') for f in files)
-
-
 def collect(rev_range):
     fixes, followups, mitig, prereqs, hardening, local = {}, {}, {}, [], [], []
     for c in commits(rev_range):
@@ -84,9 +79,7 @@ def collect(rev_range):
             prereqs.append(c)
         elif c['upstream']:
             hardening.append(c)
-        elif not docs_only(c['sha']):
-            # Commits that only touch docs/ (such as updates of docs/FIXES.md itself) are not
-            # listed, so the committed fix list can be up to date.
+        else:
             local.append(c)
     return fixes, followups, mitig, prereqs, hardening, local
 

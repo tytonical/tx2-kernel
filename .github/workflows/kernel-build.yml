@@ -107,18 +107,13 @@ jobs:
           ls -l "$STAGE/boot" "$STAGE/boot/dtb"
           tar -C "$STAGE" -cJf "$DIST/tx2nx-kernel-$release.tar.xz" --owner=0 --group=0 boot lib
 
-      # The fix list and the VEX come from the commit trailers and docs/cve-baseline.tsv.
-      # The committed docs/FIXES.md must be up to date.
+      # The fix list and the VEX are build outputs, generated from the commit trailers and
+      # docs/cve-baseline.tsv.
       - name: Fix list and OpenVEX
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           python3 scripts/fixes.py md > "$DIST/FIXES-$VERSION.md"
-          if ! diff -q docs/FIXES.md "$DIST/FIXES-$VERSION.md" >/dev/null; then
-            echo "::error::docs/FIXES.md is out of date; run scripts/fixes.py md > docs/FIXES.md"
-            diff docs/FIXES.md "$DIST/FIXES-$VERSION.md" | head -40
-            exit 1
-          fi
           python3 scripts/fixes.py vex --version "$VERSION" --commit "$GITHUB_SHA" \
             > "$DIST/tx2nx-kernel-$VERSION.openvex.json"
           (cd "$DIST" && sha256sum *.tar.xz *.md *.json > SHA256SUMS && cat SHA256SUMS)
