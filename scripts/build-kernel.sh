@@ -1,13 +1,25 @@
 #!/bin/bash
 # Build the TX2 NX ANPR kernel: tegra_defconfig + configs/tx2nx-anpr.config.
 # Usage: scripts/build-kernel.sh <outdir>
-# Needs ARCH and CROSS_COMPILE in the environment (source ~/tyton-1c/env.sh).
+# Needs ARCH and CROSS_COMPILE in the environment (CI uses ARCH=arm64,
+# CROSS_COMPILE=aarch64-linux-gnu-).
+# Optional KERNEL_RELEASE (e.g. 4.9.337-tyton-1): must start with the kernel's
+# own version; the rest becomes LOCALVERSION, so `uname -r` and
+# /lib/modules/<release> report it. The build fails if the result differs.
 set -euo pipefail
 
 TOP=$(cd "$(dirname "$0")/.." && pwd)
 KSRC=$TOP/kernel/kernel-4.9
 FRAG=$TOP/configs/tx2nx-anpr.config
 OUT=$(realpath -m "${1:?usage: $0 <outdir>}")
+KVER=$(make -s -C "$KSRC" kernelversion)
+if [ -n "${KERNEL_RELEASE:-}" ]; then
+	case $KERNEL_RELEASE in
+	"$KVER") export LOCALVERSION= ;;
+	"$KVER"-*) export LOCALVERSION=${KERNEL_RELEASE#"$KVER"} ;;
+	*) echo "KERNEL_RELEASE=$KERNEL_RELEASE does not start with kernel version $KVER" >&2; exit 1 ;;
+	esac
+fi
 DTS=_ddot_/_ddot_/_ddot_/_ddot_/_ddot_/_ddot_/hardware/nvidia/platform/t18x/lanai/kernel-dts
 DTBS="tegra186-p3636-0001-p3509-0000-a01.dtb tegra186-p3636-0002-p3509-0000-a01.dtb"
 # Objects that must come out of the build. Kconfig can report a driver as =y
@@ -83,3 +95,9 @@ for o in $REQUIRED_OBJS; do
 	fi
 done
 [ $bad -eq 0 ] || exit 1
+
+release=$(cat "$OUT/include/config/kernel.release")
+if [ -n "${KERNEL_RELEASE:-}" ] && [ "$release" != "$KERNEL_RELEASE" ]; then
+	echo "built kernel.release is $release, expected $KERNEL_RELEASE" >&2; exit 1
+fi
+echo "kernel.release: $release"
