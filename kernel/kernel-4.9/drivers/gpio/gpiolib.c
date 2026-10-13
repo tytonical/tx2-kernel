@@ -2,6 +2,7 @@
 #include <linux/module.h>
 #include <linux/interrupt.h>
 #include <linux/irq.h>
+#include <linux/nospec.h>
 #include <linux/spinlock.h>
 #include <linux/list.h>
 #include <linux/device.h>
@@ -120,7 +121,7 @@ struct gpio_desc *gpiochip_get_desc(struct gpio_chip *chip,
 	if (hwnum >= gdev->ngpio)
 		return ERR_PTR(-EINVAL);
 
-	return &gdev->descs[hwnum];
+	return &gdev->descs[array_index_nospec(hwnum, gdev->ngpio)];
 }
 
 /**
@@ -484,7 +485,7 @@ static int linehandle_create(struct gpio_device *gdev, void __user *ip)
 			goto out_free_descs;
 		}
 
-		desc = &gdev->descs[offset];
+		desc = &gdev->descs[array_index_nospec(offset, gdev->ngpio)];
 		ret = gpiod_request(desc, lh->label);
 		if (ret)
 			goto out_free_descs;
@@ -812,7 +813,7 @@ static int lineevent_create(struct gpio_device *gdev, void __user *ip)
 		goto out_free_label;
 	}
 
-	desc = &gdev->descs[offset];
+	desc = &gdev->descs[array_index_nospec(offset, gdev->ngpio)];
 	ret = gpiod_request(desc, le->label);
 	if (ret)
 		goto out_free_label;
@@ -937,7 +938,8 @@ static long gpio_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		if (lineinfo.line_offset >= gdev->ngpio)
 			return -EINVAL;
 
-		desc = &gdev->descs[lineinfo.line_offset];
+		desc = &gdev->descs[array_index_nospec(lineinfo.line_offset,
+						       gdev->ngpio)];
 		if (desc->name) {
 			strncpy(lineinfo.name, desc->name,
 				sizeof(lineinfo.name));

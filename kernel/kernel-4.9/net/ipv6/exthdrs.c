@@ -150,6 +150,12 @@ static bool ip6_parse_tlv(const struct tlvtype_proc *procs, struct sk_buff *skb)
 					   func(). */
 					if (curr->func(skb, off) == false)
 						return false;
+
+					/* func() may have changed skb
+					 * pointers (e.g. ipv6_hop_jumbo()
+					 * calls pskb_trim_rcsum()).
+					 */
+					nh = skb_network_header(skb);
 					break;
 				}
 			}
