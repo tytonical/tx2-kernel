@@ -31,7 +31,7 @@ struct linux_binprm {
 		/*
 		 * Set by flush_old_exec, when exec_mmap has been called.
 		 * This is past the point of no return, when the
-		 * exec_update_mutex has been taken.
+		 * exec_update_lock has been taken.
 		 */
 		called_exec_mmap:1;
 #ifdef __alpha__
