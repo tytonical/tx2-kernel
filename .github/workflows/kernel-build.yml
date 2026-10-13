@@ -43,7 +43,7 @@ jobs:
     steps:
       # Full history and tags: the fix list is generated from the commits since the
       # l4t-r32.7.6-tarball tag.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
